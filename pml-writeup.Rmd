@@ -1,0 +1,121 @@
+---
+title: "Predicting the exersizing manner"
+output: html_document
+---
+
+Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions ([more details here](http://groupware.les.inf.puc-rio.br/har#ixzz3Y7NSnGuq)): 
+
+* Class A: exactly according to the specification
+* Class B: throwing the elbows to the front 
+* Class C: lifting the dumbbell only halfway 
+* Class D: lowering the dumbbell only halfway
+* Class E: throwing the hips to the front
+
+# Pre-processing
+## Loading dataset
+
+Empty strings, "division by zero" strings and "NA" strings were interpreted as missing values.
+
+```{r message=FALSE}
+initialData <- read.csv("dataset/pml-training.csv", na.strings = c("", "#DIV/0!", "NA"))
+finalTesting <- read.csv("dataset/pml-testing.csv", na.strings = c("", "#DIV/0!", "NA"))
+library(gbm)
+library(caret)
+library(ipred)
+```
+
+## Variable selection
+
+First, I excluded all aggregate measures (e.g. those started with `min_`, `max_`, `amplitude_`, `var_`, etc.). There were two reason for that:
+
+1. These variables had a very large proportion of missing values (more that 97%)
+2. Since the purpose of study was to predict the way of excersizing on the base of "one-row" data, it seemed not reasonable to use aggregate measures. In other words, we knew that the new data for prediction did not have these measures.
+
+```{r message=FALSE}
+excluded <- grep("(min|max|avg|var|ske|amp|std|kur)", 
+                 substr(names(initialData), 1, 3))
+```
+
+Second, I excluded all time-related and window-related information as well as id and user names.
+
+```{r message=FALSE}
+excluded <- c(1:7, excluded)
+initialData <- initialData[,-excluded]
+```
+
+For further usage, I saved index of outcome from the new dataset:
+```{r message=FALSE}
+outInd <- match("classe", names(initialData))
+```
+
+# Modelling
+## Partitioning the data into testing and training subsets
+The data was divided into testing and training subsets (25% and 75% of rows correspondingly). All models were constructed using training set only. The model selection was also based on results in training set. The testing set was used once for calculating out-of-sample error. 
+
+```{r message=FALSE}
+inTrain <- createDataPartition(initialData$classe, p = 3/4)[[1]]
+training <- initialData[inTrain,]
+testing <- initialData[-inTrain,]
+```
+
+Also I used k-folds cross-validation with k = 4 to choose among models (parameters' estimates and feature selection).
+
+```{r message=FALSE}
+trControl <- trainControl(method = "cv", number = 4)
+```
+
+### Modelling
+
+I run five different methods
+
+* Linear Discriminant Analysis (LDA)
+* Stochastic Gradient Boosting
+* Classification Tree (CART)
+* Bagged CART
+* Random Forest
+
+```{r cache=TRUE, results='hide', message=FALSE}
+modelLDA <- train(classe~., method = "lda", data = training, trControl = trControl)
+modelGBM <- train(classe~., method = "gbm", data = training, trControl = trControl)
+modelTree <- train(classe~., method = "rpart", data = training, trControl = trControl)
+modelTreeB <- train(classe~., method = "treebag", data = training, trControl = trControl)
+modelRF <- train(classe~., method = "rf", data = training, trControl = trControl)
+```
+
+Predicting and Summary of models
+```{r cache=TRUE}
+predictLDA.in <- predict(modelLDA, training[,-outInd])
+cmLDA <- confusionMatrix(training$classe, predictLDA.in)
+predictGBM.in <- predict(modelGBM, training[,-outInd])
+cmGBM <- confusionMatrix(training$classe, predictGBM.in)
+predictTree.in <- predict(modelTree, training[,-outInd])
+cmTree <- confusionMatrix(training$classe, predictTree.in)
+predictTreeB.in <- predict(modelTreeB, training[,-outInd])
+cmTreeB <- confusionMatrix(training$classe, predictTreeB.in)
+predictRF.in <- predict(modelRF, training[,-outInd])
+cmRF <- confusionMatrix(training$classe, predictRF.in)
+```
+
+For each model the best set of parameters was selected based on cross-validation (with `train()` function). In-sample accuracies were calculated based on training dataset. 
+
+Method                             |     Accuracy
+------------------------------     |     --------
+Linear Discriminant Analysis (LDA) |`r cmLDA$overall["Accuracy"]`
+Stochastic Gradient Boosting       |`r cmGBM$overall["Accuracy"]`
+Classification Tree (CART)         |`r cmTree$overall["Accuracy"]`
+Bagged CART                        |`r cmTreeB$overall["Accuracy"]`
+Random Forest                      |`r cmRF$overall["Accuracy"]`
+
+So the best model was Random Forest. 
+
+### Out-of-sample accuracy
+
+Out-of-sample accuracy was calculated on the testing data with Random Forrest method.
+
+```{r message=FALSE}
+predictRF.out <- predict(modelRF, testing[,-outInd])
+confusionMatrix(testing$classe, predictRF.out)$overall["Accuracy"]
+```
+
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013
